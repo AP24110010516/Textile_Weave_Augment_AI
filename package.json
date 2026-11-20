@@ -1,0 +1,18 @@
+{
+  "name": "weaveaugment-ai",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n backend,frontend \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "node backend/server.cjs",
+    "dev:frontend": "npm run dev --workspace=weaveaugment-ai-frontend",
+    "build": "npm run build --workspace=weaveaugment-ai-frontend",
+    "start": "node backend/server.cjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

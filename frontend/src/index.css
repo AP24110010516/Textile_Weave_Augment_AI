@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "DM Sans", sans-serif;
+  color: #24213b;
+  background: #f8f8fc;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  scroll-behavior: smooth;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 360px; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+
+.font-display { font-family: "Manrope", sans-serif; }
+.page-shell { width: min(1160px, calc(100% - 48px)); margin-inline: auto; }
+.gradient-text { background: linear-gradient(100deg, #7858ed 5%, #368be9 52%, #e35db3 100%); color: transparent; background-clip: text; }
+.soft-grid {
+  background-image: radial-gradient(rgba(121, 102, 216, .12) .8px, transparent .8px);
+  background-size: 19px 19px;
+}
+.fabric-texture {
+  background-color: #b7a4ef;
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 7px, rgba(255,255,255,.26) 8px, transparent 10px),
+    repeating-linear-gradient(90deg, transparent 0 7px, rgba(62,41,131,.14) 8px, transparent 10px),
+    linear-gradient(135deg, #87dcdf 0%, #ba9af4 43%, #fa9acb 100%);
+}
+.fabric-mini {
+  background-color: #b7a4ef;
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 4px, rgba(255,255,255,.24) 5px, transparent 7px),
+    repeating-linear-gradient(90deg, transparent 0 4px, rgba(62,41,131,.13) 5px, transparent 7px),
+    linear-gradient(135deg, #87dcdf 0%, #ba9af4 48%, #fa9acb 100%);
+}
+.range-input { accent-color: #795ce8; }
+.checkerboard {
+  background-color: #fbfbfd;
+  background-image: linear-gradient(45deg, #f1f0f7 25%, transparent 25%), linear-gradient(-45deg, #f1f0f7 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #f1f0f7 75%), linear-gradient(-45deg, transparent 75%, #f1f0f7 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+.noise { background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.18'/%3E%3C/svg%3E"); }
+
+@media (max-width: 640px) {
+  .page-shell { width: min(100% - 32px, 1160px); }
+}
