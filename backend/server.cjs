@@ -7,6 +7,7 @@ const crypto = require('node:crypto')
 const { promisify } = require('node:util')
 const { DatabaseSync } = require('node:sqlite')
 const sharp = require('sharp')
+const { buildColorVariationPrompt, normalizeDesiredFabricColor } = require('./colorVariation.cjs')
 const {
   InvalidImageError,
   ModelUnavailableError,
@@ -369,25 +370,28 @@ function upstreamErrorMessage(status, details) {
   return `Stability AI returned an error (${status})${detail ? `: ${detail}` : '.'}`
 }
 
-async function generatedImageDiffersFromSource(sourceBuffer, generatedBase64) {
-  const generatedBuffer = Buffer.from(generatedBase64, 'base64')
-  const [source, generated] = await Promise.all([
-    sharp(sourceBuffer, { limitInputPixels: maxImagePixels }).resize(128, 128, { fit: 'inside' }).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
-    sharp(generatedBuffer, { limitInputPixels: maxImagePixels }).resize(128, 128, { fit: 'inside' }).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+async function imagesVisiblyDiffer(firstBuffer, secondBuffer) {
+  const [first, second] = await Promise.all([
+    sharp(firstBuffer, { limitInputPixels: maxImagePixels }).resize(128, 128, { fit: 'inside' }).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+    sharp(secondBuffer, { limitInputPixels: maxImagePixels }).resize(128, 128, { fit: 'inside' }).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
   ])
-  if (source.info.width !== generated.info.width || source.info.height !== generated.info.height ||
-      source.info.channels !== 3 || generated.info.channels !== 3) return false
+  if (first.info.width !== second.info.width || first.info.height !== second.info.height ||
+      first.info.channels !== 3 || second.info.channels !== 3) return false
   let changedPixels = 0
   let totalDifference = 0
-  for (let index = 0; index < source.data.length; index += 3) {
-    const difference = Math.abs(source.data[index] - generated.data[index]) +
-      Math.abs(source.data[index + 1] - generated.data[index + 1]) +
-      Math.abs(source.data[index + 2] - generated.data[index + 2])
+  for (let index = 0; index < first.data.length; index += 3) {
+    const difference = Math.abs(first.data[index] - second.data[index]) +
+      Math.abs(first.data[index + 1] - second.data[index + 1]) +
+      Math.abs(first.data[index + 2] - second.data[index + 2])
     totalDifference += difference
     if (difference >= 15) changedPixels += 1
   }
-  const pixelCount = source.data.length / 3
+  const pixelCount = first.data.length / 3
   return totalDifference / pixelCount / 3 >= 1.5 || changedPixels / pixelCount >= 0.01
+}
+
+async function generatedImageDiffersFromSource(sourceBuffer, generatedBase64) {
+  return imagesVisiblyDiffer(sourceBuffer, Buffer.from(generatedBase64, 'base64'))
 }
 
 async function applyDefectRefinement(generatedBase64, defectType) {
@@ -513,10 +517,20 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
         return
       }
 
-      const prompt = typeof request.body.prompt === 'string' ? request.body.prompt.trim() : ''
+      let prompt = typeof request.body.prompt === 'string' ? request.body.prompt.trim() : ''
       const negativePrompt = typeof request.body.negativePrompt === 'string' ? request.body.negativePrompt.trim() : ''
       const defectType = typeof request.body.defectType === 'string' ? request.body.defectType.trim() : ''
       const taskMode = typeof request.body.taskMode === 'string' ? request.body.taskMode.trim() : ''
+      if (taskMode === 'color-variation') {
+        let desiredFabricColor
+        try {
+          desiredFabricColor = normalizeDesiredFabricColor(request.body.desiredFabricColor)
+        } catch (error) {
+          response.status(400).json({ error: error.message })
+          return
+        }
+        prompt = buildColorVariationPrompt(prompt, desiredFabricColor)
+      }
       const uiStrength = Number(request.body.imageStrength)
       const variations = Number(request.body.variations)
       if (!prompt || prompt.length > 2000) {
@@ -531,13 +545,17 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
         response.status(400).json({ error: 'Image strength must be between 0.25 and 0.35.' })
         return
       }
-      const imageStrength = Math.max(0, Math.min(1, 1 - uiStrength))
+      // Color changes need a stronger image-to-image transformation than defect work.
+      const imageStrength = taskMode === 'color-variation'
+        ? 0.85 - (uiStrength - 0.25)
+        : Math.max(0, Math.min(1, 1 - uiStrength))
       if (!Number.isInteger(variations) || variations < 1 || variations > 50) {
         response.status(400).json({ error: 'Requested variations must be a whole number from 1 to 50.' })
         return
       }
 
       const results = []
+      const acceptedImageBuffers = []
       while (results.length < variations) {
         const samples = Math.min(10, variations - results.length)
         const form = new FormData()
@@ -619,6 +637,16 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
               return
             }
           }
+          const outputBuffer = Buffer.from(outputBase64, 'base64')
+          let distinctFromPrevious = true
+          for (const previousBuffer of acceptedImageBuffers) {
+            if (!await imagesVisiblyDiffer(previousBuffer, outputBuffer)) {
+              distinctFromPrevious = false
+              break
+            }
+          }
+          if (!distinctFromPrevious) continue
+          acceptedImageBuffers.push(outputBuffer)
           results.push({
             name: `Variation ${String(results.length + 1).padStart(2, '0')}`,
             dataUrl: `data:image/png;base64,${outputBase64}`,
