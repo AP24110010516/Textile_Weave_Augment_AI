@@ -3,9 +3,16 @@ const assert = require('node:assert/strict')
 const {
   buildColorVariationPrompt,
   buildTextilePrompt,
+  mapDatasetImageStrength,
   normalizeDesiredFabricColor,
   normalizeFabricType,
 } = require('../colorVariation.cjs')
+
+test('dataset strength mapping preserves more source at higher slider values', () => {
+  assert.equal(mapDatasetImageStrength(0.25), 0.7)
+  assert.equal(mapDatasetImageStrength(0.3), 0.75)
+  assert.equal(mapDatasetImageStrength(0.35), 0.8)
+})
 
 test('textile prompts retain the selected fabric characteristics for every supported type', () => {
   const examples = [

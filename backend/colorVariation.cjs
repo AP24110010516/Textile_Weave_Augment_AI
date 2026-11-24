@@ -23,6 +23,11 @@ function buildTextilePrompt(basePrompt, fabricType) {
   return `The final textile must be unmistakably ${fabricType}: ${characteristics}. If the source differs, transform its fiber appearance and weave to match ${fabricType}; do not retain a conflicting material type. Preserve the source framing, folds, lighting, shadows, and fine details while keeping the selected ${fabricType} identity throughout. ${basePrompt}`.trim()
 }
 
+function mapDatasetImageStrength(uiStrength) {
+  // Calibrate the UI range to SDXL strengths that retain most of the source image.
+  return Number((uiStrength + 0.45).toFixed(2))
+}
+
 function normalizeDesiredFabricColor(value) {
   if (value === undefined || value === null) return ''
   if (typeof value !== 'string') throw new TypeError('Desired fabric color must be text.')
@@ -45,6 +50,7 @@ function buildColorVariationPrompt(basePrompt, desiredFabricColor) {
 module.exports = {
   buildColorVariationPrompt,
   buildTextilePrompt,
+  mapDatasetImageStrength,
   normalizeDesiredFabricColor,
   normalizeFabricType,
 }

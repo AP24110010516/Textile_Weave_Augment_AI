@@ -1,9 +1,21 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import JSZip from 'jszip'
 import { ArrowDownToLine, ArrowLeft, Bookmark, Check, CircleHelp, Copy, FileImage, LoaderCircle, Upload, WandSparkles } from 'lucide-react'
+import { createDatasetArchive, type DatasetLibraryDraft, type DatasetLibraryRecord } from './datasetLibrary'
 
 type Result = { name: string; url: string }
 type GenerationPrompts = { positive: string; negative: string }
+type GenerationInfo = {
+  provider: string
+  model: string
+  imageStrength: number
+  uiImageStrength: number
+  requestedVariations: number
+  actualVariations: number
+  fabricType: string
+  defectType: string | null
+  sourceImage: { name: string; type: string; size: number }
+}
 type AugmentationMode = 'defect-creation' | 'color-variation' | 'dataset-builder'
 type SdxlStatus = 'checking' | 'configured' | 'needs-key' | 'unavailable'
 type FabricType = 'Cotton' | 'Silk' | 'Denim' | 'Wool' | 'Polyester'
@@ -14,6 +26,7 @@ type Props = {
   onBack: () => void
   onGenerated: (summary: string, images: Result[]) => void
   onSaveImage: (image: Result) => void
+  onSaveDataset: (dataset: DatasetLibraryDraft) => Promise<DatasetLibraryRecord>
 }
 
 const dimensions = [
@@ -50,15 +63,14 @@ async function prepareImage(file: File): Promise<Blob> {
 
 function buildPrompt(mode: AugmentationMode, fabric: FabricType, defect: DefectType) {
   if (mode === 'dataset-builder') {
-    return `Photorealistic textile dataset sample of ${fabric.toLowerCase()} fabric with one naturally integrated ${defect.toLowerCase()} defect, preserve the selected fabric identity, source framing, folds, macro details, and lighting, realistic industrial close-up photography, ${defect === 'Hole'
-      ? 'irregular woven edge interruption with exposed or darker underlying fibers and visibly broken threads'
-      : defect === 'Scratch'
-        ? 'thin rubbed fibers and realistic linear abrasion through the surface weave'
-        : defect === 'Stain'
-          ? 'organic pigment discoloration absorbed naturally into surrounding fibers'
-          : defect === 'Tear'
-            ? 'irregular pulled fibers and separated weave strands forming a genuine tear'
-            : 'realistic visible surface damage'}; no text, label, sticker, painted circle, or artificial overlay.`
+    const defectVariation = defect === 'Hole'
+      ? 'slightly vary its irregular edge, fraying, and exposed threads'
+      : defect === 'Stain'
+        ? 'slightly vary its absorbed outline, edge, and intensity'
+        : defect === 'Scratch'
+          ? 'slightly vary its narrow abrasion line and disturbed fibers'
+          : 'slightly vary its irregular tear edge and pulled fibers'
+    return `Create a distinct but subtle image-to-image variation of the exact uploaded textile. Keep the existing ${defect.toLowerCase()} defect clearly visible in the same source area; ${defectVariation}. Preserve the same fabric surface, weave, color, camera angle, crop, scale, and background. The selected fabric label is ${fabric}, but do not change the source textile into a different material or scene. Photorealistic macro textile inspection image with natural woven fibers and realistic texture.`
   }
   return mode === 'color-variation'
     ? `Photorealistic image-to-image variation of the uploaded textile. Keep the selected fabric type and its material characteristics, while preserving the source framing, folds, lighting, shadows, and fine details.`
@@ -73,7 +85,7 @@ function buildPrompt(mode: AugmentationMode, fabric: FabricType, defect: DefectT
             : 'The defect must visibly alter the actual textile surface with natural irregular texture rather than a label or overlay.'} No text, label, logo, sticker, uniform black shape, or completely unrelated fabric.`
 }
 
-export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGenerated, onSaveImage }: Props) {
+export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGenerated, onSaveImage, onSaveDataset }: Props) {
   const fileInput = useRef<HTMLInputElement>(null)
   const activeRequest = useRef<AbortController | null>(null)
   const generationSession = useRef(0)
@@ -85,7 +97,12 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
   const [variationCount, setVariationCount] = useState('4')
   const [results, setResults] = useState<Result[]>([])
   const [generationPrompts, setGenerationPrompts] = useState<GenerationPrompts | null>(null)
+  const [generationInfo, setGenerationInfo] = useState<GenerationInfo | null>(null)
   const [selectedResult, setSelectedResult] = useState<Result | null>(null)
+  const [savedDataset, setSavedDataset] = useState<DatasetLibraryRecord | null>(null)
+  const [datasetSaving, setDatasetSaving] = useState(false)
+  const [datasetSaveMessage, setDatasetSaveMessage] = useState('')
+  const datasetSavePromise = useRef<Promise<DatasetLibraryRecord | null> | null>(null)
   const [savedUrls, setSavedUrls] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -102,9 +119,17 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
       ? 'Dataset Builder'
       : 'Create Defects on Fabric'
   const prompt = buildPrompt(mode, fabric, defect)
+  const modelImageStrength = mode === 'dataset-builder'
+    ? Number((imageStrength + 0.45).toFixed(2))
+    : imageStrength
+  const requestNegativePrompt = mode === 'color-variation'
+    ? `${negativePrompt} flat color overlay, color cast, colored lighting, altered weave, changed material`
+    : mode === 'dataset-builder'
+      ? `${negativePrompt} clean unblemished fabric, missing or hidden ${defect.toLowerCase()} defect, different defect type, new scene, changed camera angle, changed crop, draped fabric, decorative folds, sculpture, unrelated object`
+      : negativePrompt
   const requestedVariations = Number(variationCount)
   const validVariationCount = Number.isInteger(requestedVariations) && requestedVariations >= 1 && requestedVariations <= 50
-  const canGenerate = !!file && validVariationCount && sdxlStatus === 'configured' && !loading
+  const canGenerate = !!file && validVariationCount && sdxlStatus === 'configured' && !loading && !datasetSaving
 
   useEffect(() => {
     if (!file) { setPreviewUrl(''); return }
@@ -133,7 +158,10 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
     setFile(nextFile)
     setResults([])
     setGenerationPrompts(null)
+    setGenerationInfo(null)
     setSelectedResult(null)
+    setSavedDataset(null)
+    setDatasetSaveMessage('')
     setSavedUrls([])
     setCopiedPrompt(null)
     setPromptCopyError('')
@@ -161,7 +189,10 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
     setMessage('')
     setResults([])
     setGenerationPrompts(null)
+    setGenerationInfo(null)
     setSelectedResult(null)
+    setSavedDataset(null)
+    setDatasetSaveMessage('')
     setCopiedPrompt(null)
     setPromptCopyError('')
     try {
@@ -170,9 +201,7 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
       const formData = new FormData()
       formData.append('image', preparedImage, `${sourceFile.name.replace(/\.[^.]+$/, '') || 'image'}.png`)
       formData.append('prompt', prompt)
-      formData.append('negativePrompt', mode === 'color-variation'
-        ? `${negativePrompt} flat color overlay, color cast, colored lighting, altered weave, changed material`
-        : negativePrompt)
+      formData.append('negativePrompt', requestNegativePrompt)
       formData.append('imageStrength', String(imageStrength))
       formData.append('variations', String(requestedVariations))
       formData.append('defectType', defect)
@@ -192,16 +221,55 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
         if (!payload || typeof payload !== 'object' ||
             !('images' in payload) || !Array.isArray(payload.images) ||
             !('positivePrompt' in payload) || typeof payload.positivePrompt !== 'string' ||
-            !('negativePrompt' in payload) || typeof payload.negativePrompt !== 'string') {
-          throw new Error('The generation server returned incomplete image or prompt data.')
+            !('negativePrompt' in payload) || typeof payload.negativePrompt !== 'string' ||
+            !('generation' in payload) || !payload.generation || typeof payload.generation !== 'object') {
+          throw new Error('The generation server returned incomplete image, prompt, or generation data.')
+        }
+        const generation = payload.generation
+        if (!('provider' in generation) || typeof generation.provider !== 'string' ||
+            !('model' in generation) || typeof generation.model !== 'string' ||
+            !('imageStrength' in generation) || typeof generation.imageStrength !== 'number' ||
+        !('uiImageStrength' in generation) || typeof generation.uiImageStrength !== 'number' ||
+            !('requestedVariations' in generation) || typeof generation.requestedVariations !== 'number' ||
+            !('actualVariations' in generation) || typeof generation.actualVariations !== 'number' ||
+            !('fabricType' in generation) || typeof generation.fabricType !== 'string' ||
+            !('defectType' in generation) ||
+            !('sourceImage' in generation) || !generation.sourceImage || typeof generation.sourceImage !== 'object' ||
+            !('name' in generation.sourceImage) || typeof generation.sourceImage.name !== 'string' ||
+            !('type' in generation.sourceImage) || typeof generation.sourceImage.type !== 'string' ||
+            !('size' in generation.sourceImage) || typeof generation.sourceImage.size !== 'number') {
+          throw new Error('The generation server returned invalid generation metadata.')
         }
         const images = payload.images.filter((image): image is { name: string; dataUrl: string } =>
           !!image && typeof image === 'object' && 'name' in image && typeof image.name === 'string' && 'dataUrl' in image && typeof image.dataUrl === 'string' && image.dataUrl.startsWith('data:image/png;base64,'))
-        if (!images.length) throw new Error('Stable Diffusion did not return any usable images.')
+        if (images.length !== requestedVariations ||
+            generation.actualVariations !== images.length ||
+            generation.requestedVariations !== requestedVariations ||
+            generation.imageStrength !== modelImageStrength ||
+            generation.uiImageStrength !== imageStrength ||
+            generation.fabricType !== fabric ||
+            (mode === 'dataset-builder' && generation.defectType !== defect)) {
+          throw new Error('SDXL returned incomplete images or generation settings that do not match this request.')
+        }
         if (requestId !== generationSession.current) return
         const generated = images.map(({ name, dataUrl }) => ({ name, url: dataUrl }))
         setResults(generated)
         setGenerationPrompts({ positive: payload.positivePrompt, negative: payload.negativePrompt })
+        setGenerationInfo({
+          provider: generation.provider,
+          model: generation.model,
+          imageStrength: generation.imageStrength,
+          uiImageStrength: generation.uiImageStrength,
+          requestedVariations: generation.requestedVariations,
+          actualVariations: generation.actualVariations,
+          fabricType: generation.fabricType,
+          defectType: typeof generation.defectType === 'string' ? generation.defectType : null,
+          sourceImage: {
+            name: generation.sourceImage.name,
+            type: generation.sourceImage.type,
+            size: generation.sourceImage.size,
+          },
+        })
         if (generated.length > 0) setSelectedResult(generated[0])
         setProgress(100)
         const summary = `${generated.length} images · ${fabric} · ${mode === 'color-variation' ? 'Natural color variations' : defect}`
@@ -228,21 +296,81 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
     anchor.remove()
   }
 
+  const saveDataset = (): Promise<DatasetLibraryRecord | null> => {
+    if (mode !== 'dataset-builder' || !file || !generationPrompts || !generationInfo ||
+        !generationInfo.defectType || results.length !== generationInfo.requestedVariations || results.length === 0) return Promise.resolve(null)
+    if (savedDataset) return Promise.resolve(savedDataset)
+    if (datasetSavePromise.current) return datasetSavePromise.current
+
+    const requestId = generationSession.current
+    const generatedDefectType = generationInfo.defectType
+    const dataset: DatasetLibraryDraft = {
+      name: `${generationInfo.fabricType} ${generatedDefectType} dataset ${new Date().toLocaleString()}`,
+      fabricType: generationInfo.fabricType,
+      defectType: generatedDefectType,
+      sourceImage: { name: file.name, type: file.type, size: file.size },
+      imageStrength: generationInfo.imageStrength,
+      uiImageStrength: generationInfo.uiImageStrength,
+      requestedVariations: generationInfo.requestedVariations,
+      actualVariations: generationInfo.actualVariations,
+      positivePrompt: generationPrompts.positive,
+      negativePrompt: generationPrompts.negative,
+      provider: generationInfo.provider,
+      model: generationInfo.model,
+      images: results.map((result, index) => ({
+        name: `${generationInfo.fabricType.toLowerCase()}_${generatedDefectType.toLowerCase()}_${String(index + 1).padStart(2, '0')}.png`,
+        dataUrl: result.url,
+      })),
+    }
+    setDatasetSaving(true)
+    setDatasetSaveMessage('')
+    setError('')
+    const saving = onSaveDataset(dataset)
+      .then((record) => {
+        if (requestId === generationSession.current) {
+          setSavedDataset(record)
+          setDatasetSaveMessage('Dataset saved to Dataset Library.')
+        }
+        return record
+      })
+      .catch((reason) => {
+        const detail = reason instanceof Error ? reason.message : 'Storage returned an unknown error.'
+        setError(`Could not save dataset: ${detail}`)
+        return null
+      })
+      .finally(() => {
+        setDatasetSaving(false)
+        datasetSavePromise.current = null
+      })
+    datasetSavePromise.current = saving
+    return saving
+  }
+
   const downloadAll = async () => {
     if (!results.length || zipLoading) return
     setZipLoading(true)
     setError('')
     try {
-      const archive = new JSZip()
-      results.forEach((result, index) => {
-        const prefix = mode === 'dataset-builder' ? 'fabric_variation' : mode === 'defect-creation' ? `${defect.toLowerCase().replaceAll(' ', '-')}_defect` : 'fabric_variation'
-        archive.file(`${prefix}_${String(index + 1).padStart(2, '0')}.png`, result.url.split(',')[1], { base64: true })
-      })
-      const blob = await archive.generateAsync({ type: 'blob' })
+      let blob: Blob
+      let filename: string
+      if (mode === 'dataset-builder') {
+        const dataset = await saveDataset()
+        if (!dataset) return
+        blob = await createDatasetArchive(dataset)
+        filename = `${dataset.fabricType.toLowerCase()}_${dataset.defectType.toLowerCase()}_dataset.zip`
+      } else {
+        const archive = new JSZip()
+        results.forEach((result, index) => {
+          const prefix = mode === 'defect-creation' ? `${defect.toLowerCase().replaceAll(' ', '-')}_defect` : 'fabric_variation'
+          archive.file(`${prefix}_${String(index + 1).padStart(2, '0')}.png`, result.url.split(',')[1], { base64: true })
+        })
+        blob = await archive.generateAsync({ type: 'blob' })
+        filename = mode === 'defect-creation' ? `${defect.toLowerCase().replaceAll(' ', '-')}_defects.zip` : 'fabric_variations.zip'
+      }
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `${mode === 'dataset-builder' ? 'fabric_variations' : mode === 'defect-creation' ? `${defect.toLowerCase().replaceAll(' ', '-')}_defects` : 'fabric_variations'}.zip`
+      anchor.download = filename
       document.body.appendChild(anchor)
       anchor.click()
       anchor.remove()
@@ -295,11 +423,12 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
           </div>
         </section>
         {mode === 'dataset-builder' && <section className="workspace-card">
-          <div className="card-heading"><div><h2>AI Generation Controls</h2><p>Strength controls how much the source image changes.</p></div></div>
+          <div className="card-heading"><div><h2>AI Generation Controls</h2><p>Adjust how much the selected defect changes while keeping the source fabric.</p></div></div>
           <div className="workspace-range-label"><label htmlFor="image-strength">Image strength</label><b>{imageStrength.toFixed(2)}</b></div>
           <input id="image-strength" className="range-input" type="range" min="0.25" max="0.35" step="0.01" value={imageStrength} onChange={(event) => setImageStrength(Number(event.target.value))} />
           <p className="field-note"><b>Lower strength:</b> Original image can undergo more changes.</p>
           <p className="field-note"><b>Higher strength:</b> More original image characteristics are preserved.</p>
+          <p className="field-note">Calibrated SDXL image strength: {modelImageStrength.toFixed(2)}.</p>
         </section>}
         {mode !== 'dataset-builder' && <div className="workspace-control-row"><label htmlFor="variation-count">Number of outputs</label><input id="variation-count" type="number" min="1" max="50" step="1" value={variationCount} onChange={(event) => setVariationCount(event.target.value)} aria-invalid={!validVariationCount} /></div>}
         {mode === 'dataset-builder' && <section className="workspace-card">
@@ -325,7 +454,11 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
         </section>
       </div>
       <section className="workspace-card results-card">
-        <div className="results-heading"><div className="card-heading">{mode !== 'dataset-builder' && <span className="step-badge">04</span>}<div><h2>Results</h2><p>{results.length ? `${results.length} generated images` : 'Generated images appear here.'}</p></div></div>{results.length > 0 && <button className="button button-outline" onClick={downloadAll} disabled={zipLoading}>{zipLoading ? <LoaderCircle size={14} className="spin" /> : <ArrowDownToLine size={14} />}{zipLoading ? 'Preparing…' : 'Download All as ZIP'}</button>}</div>
+        <div className="results-heading"><div className="card-heading">{mode !== 'dataset-builder' && <span className="step-badge">04</span>}<div><h2>Results</h2><p>{results.length ? `${results.length} generated images` : 'Generated images appear here.'}</p></div></div><div className="results-actions">
+          {mode === 'dataset-builder' && results.length > 0 && <button className="button button-outline" onClick={() => void saveDataset()} disabled={datasetSaving || zipLoading || !!savedDataset}>{datasetSaving ? <LoaderCircle size={14} className="spin" /> : savedDataset ? <Check size={14} /> : <Bookmark size={14} />}{datasetSaving ? 'Saving…' : savedDataset ? 'Saved to Library' : 'Save Dataset'}</button>}
+          {results.length > 0 && <button className="button button-outline" onClick={downloadAll} disabled={zipLoading}>{zipLoading ? <LoaderCircle size={14} className="spin" /> : <ArrowDownToLine size={14} />}{zipLoading ? 'Preparing…' : 'Download All as ZIP'}</button>}
+        </div></div>
+        {datasetSaveMessage && mode === 'dataset-builder' && <p className="success-message"><Check size={14} />{datasetSaveMessage}</p>}
         {mode === 'dataset-builder' && generationPrompts && <details className="generation-prompts">
           <summary>View Generation Prompts</summary>
           <div className="generation-prompt">

@@ -13,7 +13,6 @@
     "dev:backend": "node backend/server.cjs",
     "dev:frontend": "npm run dev --workspace=weaveaugment-ai-frontend",
     "build": "npm run build --workspace=weaveaugment-ai-frontend",
-    "models:download": "npm run models:download --workspace=weaveaugment-ai-backend",
     "start": "node backend/server.cjs"
   },
   "devDependencies": {

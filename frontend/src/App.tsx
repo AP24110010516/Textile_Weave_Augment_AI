@@ -3,22 +3,27 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowRight, Bookmark, ChevronRight, CircleHelp,
   ClipboardList, Database, Download, History, Layers3, LogOut, Menu, Moon,
-  ScanSearch, Settings2, ShieldAlert, Sparkles, Sun, Upload, UserRound, WandSparkles, X,
+  Settings2, ShieldAlert, Sparkles, Sun, Upload, UserRound, WandSparkles, X,
 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
+import {
+  createDatasetArchive,
+  listDatasetLibrary,
+  saveDatasetToLibrary,
+  type DatasetLibraryDraft,
+  type DatasetLibraryRecord,
+} from './datasetLibrary'
 const AugmentationWorkspace = lazy(() => import('./AugmentationWorkspace'))
-const DefectWorkspace = lazy(() => import('./DefectWorkspace'))
 
 type Theme = 'light' | 'dark'
 type SdxlStatus = 'checking' | 'configured' | 'needs-key' | 'unavailable'
-type ModelStatus = 'checking' | 'configured' | 'needs-models' | 'unavailable'
 type Tool = {
   title: string
   description: string
   path: string
   icon: LucideIcon
-  status: 'Available' | 'Dataset tools' | 'Local inference'
+  status: 'Available' | 'Dataset tools'
 }
 type SessionUser = { name: string; email: string }
 type GenerationActivity = {
@@ -31,15 +36,13 @@ type GenerationActivity = {
 type DatasetActivity = { id: string; createdAt: string; imageCount: number; format: string }
 type SavedImage = { id: string; name: string; url: string; tool: string; savedAt: string }
 const tools: Tool[] = [
-  { title: 'AI Defect Detection', description: 'Detect fabric defects with the local 20-class ONNX model.', path: '/tools/defect-detection', icon: ScanSearch, status: 'Local inference' },
-  { title: 'Dataset Builder', description: 'Label, split, and export a textile image dataset.', path: '/tools/dataset-builder', icon: ClipboardList, status: 'Dataset tools' },
+  { title: 'Dataset Builder', description: 'Generate and save SDXL-powered textile dataset variations.', path: '/tools/dataset-builder', icon: ClipboardList, status: 'Dataset tools' },
   { title: 'Color Variation Generator', description: 'Generate color-focused fabric variations with SDXL.', path: '/tools/color-variation', icon: WandSparkles, status: 'Available' },
   { title: 'Create Defects on Fabric', description: 'Generate synthetic defect images with the existing SDXL API.', path: '/tools/defect-creation', icon: Sparkles, status: 'Available' },
-  { title: 'Remove Defects from Fabric', description: 'Repair selected fabric defects with local LaMa inpainting.', path: '/tools/defect-removal', icon: Layers3, status: 'Local inference' },
 ]
 const protectedRoutes = new Set([
-  '/tools', '/dashboard', '/tools/defect-detection', '/tools/dataset-builder',
-  '/tools/color-variation', '/tools/defect-creation', '/tools/defect-removal',
+  '/tools', '/dashboard', '/tools/dataset-builder',
+  '/tools/color-variation', '/tools/defect-creation',
   '/history', '/saved-images', '/dataset-library', '/settings',
 ])
 
@@ -60,12 +63,14 @@ function App() {
   const [theme, setTheme] = useState<Theme>(() => localStorage.getItem('weaveaugment-theme') === 'dark' ? 'dark' : 'light')
   const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia('(min-width: 701px)').matches)
   const [sdxlStatus, setSdxlStatus] = useState<SdxlStatus>('checking')
-  const [localModelStatus, setLocalModelStatus] = useState<{ detection: ModelStatus; removal: ModelStatus }>({ detection: 'checking', removal: 'checking' })
   const [user, setUser] = useState<SessionUser | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [activities, setActivities] = useState<GenerationActivity[]>([])
   const [datasetActivities] = useState<DatasetActivity[]>([])
   const [savedImages, setSavedImages] = useState<SavedImage[]>([])
+  const [savedDatasets, setSavedDatasets] = useState<DatasetLibraryRecord[]>([])
+  const [datasetLibraryLoading, setDatasetLibraryLoading] = useState(false)
+  const [datasetLibraryError, setDatasetLibraryError] = useState('')
 
   useEffect(() => {
     const onPopState = () => setRoute(window.location.pathname)
@@ -94,24 +99,13 @@ function App() {
         if (!response.ok) throw new Error('Status request failed.')
         const payload: unknown = await response.json()
         if (!payload || typeof payload !== 'object' ||
-            !('sdxlConfigured' in payload) || typeof payload.sdxlConfigured !== 'boolean' ||
-            !('defectDetectionConfigured' in payload) || typeof payload.defectDetectionConfigured !== 'boolean' ||
-            !('defectRemovalConfigured' in payload) || typeof payload.defectRemovalConfigured !== 'boolean') {
+            !('sdxlConfigured' in payload) || typeof payload.sdxlConfigured !== 'boolean') {
           throw new Error('The status service returned an invalid response.')
         }
-        if (active) {
-          setSdxlStatus(payload.sdxlConfigured ? 'configured' : 'needs-key')
-          setLocalModelStatus({
-            detection: payload.defectDetectionConfigured ? 'configured' : 'needs-models',
-            removal: payload.defectRemovalConfigured ? 'configured' : 'needs-models',
-          })
-        }
+        if (active) setSdxlStatus(payload.sdxlConfigured ? 'configured' : 'needs-key')
       })
       .catch(() => {
-        if (active) {
-          setSdxlStatus('unavailable')
-          setLocalModelStatus({ detection: 'unavailable', removal: 'unavailable' })
-        }
+        if (active) setSdxlStatus('unavailable')
       })
     return () => { active = false }
   }, [])
@@ -134,6 +128,26 @@ function App() {
   }, [])
 
   useEffect(() => {
+    let active = true
+    setSavedDatasets([])
+    if (!user) {
+      setDatasetLibraryLoading(false)
+      setDatasetLibraryError('')
+      return () => { active = false }
+    }
+
+    setDatasetLibraryLoading(true)
+    setDatasetLibraryError('')
+    listDatasetLibrary(user.email.trim().toLowerCase())
+      .then((datasets) => { if (active) setSavedDatasets(datasets) })
+      .catch((reason) => {
+        if (active) setDatasetLibraryError(reason instanceof Error ? reason.message : 'Could not load Dataset Library.')
+      })
+      .finally(() => { if (active) setDatasetLibraryLoading(false) })
+    return () => { active = false }
+  }, [user?.email])
+
+  useEffect(() => {
     if (authLoading || user || !protectedRoutes.has(route)) return
     window.history.replaceState({}, '', '/login')
     setRoute('/login')
@@ -148,7 +162,6 @@ function App() {
     if (authLoading) return
     go(user ? '/tools' : '/login')
   }
-  const activeTool = tools.find((tool) => tool.path === route)
   const recordGeneration = (tool: string, summary: string, images: Array<{ name: string; url: string }>) => {
     setActivities((current) => [{
       id: `${Date.now()}-${Math.random()}`,
@@ -165,6 +178,28 @@ function App() {
       tool,
       savedAt: new Date().toISOString(),
     }, ...current])
+  }
+  const saveDataset = async (dataset: DatasetLibraryDraft) => {
+    if (!user) throw new Error('Sign in before saving a dataset.')
+    const record = await saveDatasetToLibrary(dataset, user.email.trim().toLowerCase())
+    setSavedDatasets((current) => [record, ...current.filter((saved) => saved.id !== record.id)])
+    return record
+  }
+  const downloadDataset = async (dataset: DatasetLibraryRecord) => {
+    setDatasetLibraryError('')
+    try {
+      const archive = await createDatasetArchive(dataset)
+      const url = URL.createObjectURL(archive)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `${dataset.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.zip`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (reason) {
+      setDatasetLibraryError(reason instanceof Error ? `Could not download dataset: ${reason.message}` : 'Could not create the dataset ZIP.')
+    }
   }
   const logout = async () => {
     try {
@@ -206,7 +241,7 @@ function App() {
   const routeRequiresAuth = protectedRoutes.has(route)
   const page = routeRequiresAuth && (authLoading || !user) ? <PageLoading /> :
     route === '/tools' ? <ToolsSelection onNavigate={go} sdxlStatus={sdxlStatus} /> :
-      route === '/dashboard' ? <Dashboard user={user!} activities={activities} datasets={datasetActivities} savedCount={savedImages.length} localModelStatus={localModelStatus} onNavigate={go} /> :
+      route === '/dashboard' ? <Dashboard user={user!} activities={activities} datasets={datasetActivities} savedCount={savedImages.length} onNavigate={go} /> :
         route === '/tools/dataset-builder' ? <Suspense fallback={<PageLoading />}>
           <AugmentationWorkspace
             mode="dataset-builder"
@@ -214,18 +249,9 @@ function App() {
             onBack={() => go('/tools')}
             onGenerated={(summary, images) => recordGeneration('Dataset Builder', summary, images)}
             onSaveImage={(image) => saveImage(image, 'Dataset Builder')}
+            onSaveDataset={saveDataset}
           />
         </Suspense> :
-          activeTool && (route === '/tools/defect-detection' || route === '/tools/defect-removal') ? <Suspense fallback={<PageLoading />}>
-            <DefectWorkspace
-              key={route}
-              mode={route === '/tools/defect-detection' ? 'detection' : 'removal'}
-              title={activeTool.title}
-              onBack={() => go('/tools')}
-              onGenerated={(summary, images) => recordGeneration(activeTool.title, summary, images)}
-              onSaveImage={(image) => saveImage(image, activeTool.title)}
-            />
-          </Suspense> :
             route === '/tools/color-variation' || route === '/tools/defect-creation' ? <Suspense fallback={<PageLoading />}>
               <AugmentationWorkspace
                 mode={route === '/tools/color-variation' ? 'color-variation' : 'defect-creation'}
@@ -233,11 +259,12 @@ function App() {
                 onBack={() => go('/tools')}
                 onGenerated={(summary, images) => recordGeneration(route === '/tools/color-variation' ? 'Color Variation Generator' : 'Create Defects on Fabric', summary, images)}
                 onSaveImage={(image) => saveImage(image, route === '/tools/color-variation' ? 'Color Variation Generator' : 'Create Defects on Fabric')}
+                onSaveDataset={saveDataset}
               />
             </Suspense> :
               route === '/history' ? <HistoryPage activities={activities} datasets={datasetActivities} /> :
                 route === '/saved-images' ? <SavedImagesPage images={savedImages} onRemove={(id) => setSavedImages((current) => current.filter((image) => image.id !== id))} /> :
-                  route === '/dataset-library' ? <DatasetLibraryPage datasets={datasetActivities} /> :
+                  route === '/dataset-library' ? <DatasetLibraryPage datasets={savedDatasets} loading={datasetLibraryLoading} error={datasetLibraryError} onDownload={(dataset) => void downloadDataset(dataset)} /> :
                     route === '/settings' ? <SettingsPage user={user!} theme={theme} onThemeChange={() => setTheme(theme === 'light' ? 'dark' : 'light')} /> :
                       <NotFound onHome={() => go('/dashboard')} />
 
@@ -292,17 +319,13 @@ function HowItWorksPage({ onExplore }: { onExplore: () => void }) {
         <p>{description}</p>
       </article>)}
     </div>
-    <div className="workflow-note"><CircleHelp size={17} /><p>Defect detection uses a local textile model. Defect removal runs LaMa inpainting on the selected detected regions.</p></div>
+    <div className="workflow-note"><CircleHelp size={17} /><p>Choose a workflow for dataset preparation or textile image generation. Available generation depends on the configured service integration.</p></div>
     <button className="button button-primary" onClick={onExplore}>Explore Tools <ArrowRight size={15} /></button>
   </section>
 }
 
 function ToolsSelection({ onNavigate, sdxlStatus }: { onNavigate: (path: string) => void; sdxlStatus: SdxlStatus }) {
-  const selectionTools = tools.filter((tool) => [
-    '/tools/dataset-builder',
-    '/tools/color-variation',
-    '/tools/defect-creation',
-  ].includes(tool.path))
+  const selectionTools = tools
   return <section className="content-page tools-selection-page">
     <div className="tools-selection-top"><PageHeading eyebrow="WORKSPACE" title="Tools Selection" description="Choose a textile image workflow to continue." /><span className="tools-count">{String(selectionTools.length).padStart(2, '0')} workspaces</span></div>
     <div className="tool-selection-grid">{selectionTools.map((tool) => {
@@ -349,7 +372,6 @@ function CompactFooter({ onNavigate }: { onNavigate: (path: string) => void }) {
 }
 
 const navigationItems: Array<{ label: string; path: string; icon: LucideIcon }> = [
-  { label: 'Tools Selection', path: '/tools', icon: ClipboardList },
   { label: 'Dashboard', path: '/dashboard', icon: Layers3 },
   { label: 'History', path: '/history', icon: History },
   { label: 'Saved Images', path: '/saved-images', icon: Bookmark },
@@ -376,15 +398,18 @@ function AppLayout({ route, user, theme, sidebarOpen, onNavigate, onThemeChange,
   }
   return <div className={`app-frame ${sidebarOpen ? 'app-sidebar-visible' : 'app-sidebar-hidden'}`} data-page-background={
     route === '/tools' ? 'tools' :
-      route === '/tools/defect-detection' || route === '/tools/defect-removal' ? 'defect-detection' :
-        route === '/tools/color-variation' || route === '/tools/defect-creation' ? 'augmentation' : undefined
+      route === '/tools/color-variation' || route === '/tools/defect-creation' ? 'augmentation' : undefined
   }>
     {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={onMenuToggle} />}
     <aside className={`app-sidebar ${sidebarOpen ? 'app-sidebar-open' : ''}`}>
       <div className="sidebar-brand"><Brand ariaLabel="Go to Dashboard" onClick={() => onNavigate('/dashboard')} /><button className="sidebar-close" onClick={onMenuToggle} aria-label="Close navigation"><X size={18} /></button></div>
       <span className="sidebar-caption">WORKSPACE</span>
       <nav className="sidebar-nav" aria-label="Workspace navigation">
-        {navigationItems.map(({ label, path, icon: Icon }) => <button key={path} className={`sidebar-link ${route === path ? 'sidebar-link-active' : ''}`} onClick={() => onNavigate(path)} title={label}><Icon size={17} strokeWidth={1.8} /><span>{label}</span>{(route === path || (path === '/tools' && route.startsWith('/tools/'))) && <ChevronRight className="sidebar-chevron" size={14} />}</button>)}
+        {navigationItems.map(({ label, path, icon: Icon }) => <button key={path} className={`sidebar-link ${route === path ? 'sidebar-link-active' : ''}`} onClick={() => onNavigate(path)} title={label}><Icon size={17} strokeWidth={1.8} /><span>{label}</span>{route === path && <ChevronRight className="sidebar-chevron" size={14} />}</button>)}
+      </nav>
+      <span className="sidebar-caption">TOOLS</span>
+      <nav className="sidebar-nav" aria-label="Tools navigation">
+        <button className={`sidebar-link ${route === '/tools' || route.startsWith('/tools/') ? 'sidebar-link-active' : ''}`} onClick={() => onNavigate('/tools')} title="Tools Selection"><ClipboardList size={17} strokeWidth={1.8} /><span>Tools Selection</span>{(route === '/tools' || route.startsWith('/tools/')) && <ChevronRight className="sidebar-chevron" size={14} />}</button>
       </nav>
       <div className="sidebar-bottom">
         <button className="sidebar-theme" onClick={onThemeChange}>{theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}<span>{theme === 'light' ? 'Dark mode' : 'Light mode'}</span><span className="theme-state">{theme}</span></button>
@@ -408,14 +433,14 @@ function PageLoading() {
   return <section className="content-page"><div className="loading-panel"><span className="loading-spinner" />Loading workspace…</div></section>
 }
 
-function Dashboard({ user, activities, datasets, savedCount, localModelStatus, onNavigate }: { user: SessionUser; activities: GenerationActivity[]; datasets: DatasetActivity[]; savedCount: number; localModelStatus: { detection: ModelStatus; removal: ModelStatus }; onNavigate: (path: string) => void }) {
+function Dashboard({ user, activities, datasets, savedCount, onNavigate }: { user: SessionUser; activities: GenerationActivity[]; datasets: DatasetActivity[]; savedCount: number; onNavigate: (path: string) => void }) {
   const generatedCount = activities.reduce((total, activity) => total + activity.images.length, 0)
   const quickLinks = tools
   const latestActivity = [...activities.map((item) => ({ id: item.id, label: item.tool, description: item.summary, date: item.createdAt })), ...datasets.map((item) => ({ id: item.id, label: 'Dataset export', description: `${item.imageCount} images · ${item.format}`, date: item.createdAt }))]
     .sort((left, right) => right.date.localeCompare(left.date)).slice(0, 4)
   const generatedImages = activities.flatMap((activity) => activity.images.map((image) => ({ ...image, tool: activity.tool }))).slice(0, 4)
   return <section className="content-page dashboard-page">
-    <div className="dashboard-welcome"><div><span className="eyebrow">OVERVIEW</span><h1>Welcome back, {user.name}</h1><p>Your textile workspace at a glance.</p></div><button className="button button-primary" onClick={() => onNavigate('/tools/dataset-builder')}><Upload size={15} /> Add images</button></div>
+    <div className="dashboard-welcome"><div><span className="eyebrow">OVERVIEW</span><h1>Welcome back, {user.name}</h1><p>Your textile workspace at a glance.</p></div></div>
     <div className="stat-grid">
       <StatCard label="Generated images" value={generatedCount} icon={Sparkles} detail="This browser session" />
       <StatCard label="Dataset exports" value={datasets.length} icon={Database} detail="Downloaded this session" />
@@ -424,10 +449,7 @@ function Dashboard({ user, activities, datasets, savedCount, localModelStatus, o
     <section className="dashboard-section"><div className="dashboard-section-head"><div><span className="eyebrow">QUICK ACCESS</span><h2>Your workspaces</h2></div><button className="quiet-link" onClick={() => onNavigate('/history')}>View history <ArrowRight size={14} /></button></div>
       <div className="quick-access-grid">{quickLinks.map((tool) => {
         const Icon = tool.icon
-        const localStatus = tool.path === '/tools/defect-detection' ? localModelStatus.detection : localModelStatus.removal
-        const status = tool.status === 'Local inference'
-          ? localStatus === 'configured' ? 'Local model inference' : localStatus === 'checking' ? 'Checking local model' : localStatus === 'needs-models' ? 'Run model download' : 'Backend unavailable'
-          : tool.status === 'Dataset tools' ? 'Local dataset tools' : 'SDXL image generation'
+        const status = tool.status === 'Dataset tools' ? 'Local dataset tools' : 'SDXL image generation'
         return <button key={tool.path} className="quick-access-card" onClick={() => onNavigate(tool.path)}><span className="quick-access-icon"><Icon size={18} /></span><span><b>{tool.title}</b><small>{status}</small></span><ArrowRight size={15} /></button>
       })}</div>
     </section>
@@ -468,11 +490,31 @@ function SavedImagesPage({ images, onRemove }: { images: SavedImage[]; onRemove:
   </section>
 }
 
-function DatasetLibraryPage({ datasets }: { datasets: DatasetActivity[] }) {
+function DatasetLibraryPage({ datasets, loading, error, onDownload }: {
+  datasets: DatasetLibraryRecord[]
+  loading: boolean
+  error: string
+  onDownload: (dataset: DatasetLibraryRecord) => void
+}) {
   return <section className="content-page">
-    <PageHeading eyebrow="YOUR WORKSPACE" title="Dataset library" description="Review the dataset exports created in this browser session." />
-    {datasets.length ? <div className="library-table"><div className="library-table-head"><span>Export</span><span>Images</span><span>Format</span><span>Created</span></div>{datasets.map((dataset, index) => <div className="library-table-row" key={dataset.id}><span><b>Dataset export {datasets.length - index}</b><small>Downloaded locally</small></span><b>{dataset.imageCount}</b><span className="format-badge">{dataset.format}</span><time>{new Date(dataset.createdAt).toLocaleString()}</time></div>)}</div> : <div className="empty-panel"><span className="empty-icon"><Database size={21} /></span><h2>No dataset exports yet</h2><p>Build and download a dataset to add an export record to this session.</p></div>}
-    <p className="session-note"><CircleHelp size={14} /> Exported files are downloaded to your device and are not retained by the application.</p>
+    <PageHeading eyebrow="YOUR WORKSPACE" title="Dataset library" description={`${datasets.length} saved dataset${datasets.length === 1 ? '' : 's'} stored in this browser.`} />
+    {error && <p className="inline-error" role="alert"><CircleHelp size={15} />{error}</p>}
+    {loading ? <div className="loading-panel"><span className="loading-spinner" />Loading saved datasets…</div> :
+      datasets.length ? <div className="history-list">{datasets.map((dataset) => <article className="history-card" key={dataset.id}>
+        <div className="history-card-top">
+          <span className="quick-access-icon"><Database size={17} /></span>
+          <div><b>{dataset.name}</b><small>{dataset.fabricType} · {dataset.defectType} · {dataset.actualVariations} generated images · Source: {dataset.sourceImage.name}</small><small>Saved {new Date(dataset.savedAt).toLocaleString()}</small></div>
+          <button className="button button-outline" onClick={() => onDownload(dataset)}><Download size={14} /> Download ZIP</button>
+        </div>
+        <details className="generation-prompts">
+          <summary>Open dataset and generation details</summary>
+          <div className="generation-prompt"><b>Generation settings</b><p>{dataset.provider} · {dataset.model} · strength {(dataset.uiImageStrength ?? dataset.imageStrength).toFixed(2)} (SDXL {dataset.imageStrength.toFixed(2)}) · {dataset.actualVariations}/{dataset.requestedVariations} images</p><p>Source: {dataset.sourceImage.name} ({dataset.sourceImage.type}, {Math.ceil(dataset.sourceImage.size / 1024)} KB)</p></div>
+          <div className="history-images">{dataset.images.map((image) => <a key={image.name} href={image.dataUrl} download={image.name} title={`Download ${image.name}`}><img src={image.dataUrl} alt={image.name} /></a>)}</div>
+          <div className="generation-prompt"><b>Positive Prompt</b><p>{dataset.positivePrompt}</p></div>
+          <div className="generation-prompt"><b>Negative Prompt</b><p>{dataset.negativePrompt || 'No negative prompt was sent for this generation.'}</p></div>
+        </details>
+      </article>)}</div> :
+        <div className="empty-panel"><span className="empty-icon"><Database size={21} /></span><h2>No saved datasets</h2><p>Generate variations in Dataset Builder, then save them or download the ZIP to add the complete dataset here.</p></div>}
   </section>
 }
 
@@ -520,7 +562,7 @@ function AuthPage({ route, onNavigate, onAuthenticated }: { route: string; onNav
         throw new Error('The authentication service returned an invalid account.')
       }
       onAuthenticated({ name: payload.user.name, email: payload.user.email })
-      onNavigate('/tools')
+      onNavigate('/dashboard')
     } catch (reason) {
       setError(reason instanceof TypeError ? 'Could not reach the authentication service. Try again shortly.' : reason instanceof Error ? reason.message : 'Authentication failed. Please try again.')
     } finally {

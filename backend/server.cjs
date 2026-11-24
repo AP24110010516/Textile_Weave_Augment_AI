@@ -10,17 +10,10 @@ const sharp = require('sharp')
 const {
   buildColorVariationPrompt,
   buildTextilePrompt,
+  mapDatasetImageStrength,
   normalizeDesiredFabricColor,
   normalizeFabricType,
 } = require('./colorVariation.cjs')
-const {
-  InvalidImageError,
-  ModelUnavailableError,
-  cacheDetections,
-  detectDefects,
-  inpaintDefects,
-  modelStatus,
-} = require('./defectModels.cjs')
 
 dotenv.config({ path: path.join(__dirname, '.env') })
 
@@ -65,14 +58,6 @@ const upload = multer({
     callback(null, true)
   },
 })
-let inferenceQueue = Promise.resolve()
-
-function runInference(task) {
-  const result = inferenceQueue.then(task, task)
-  inferenceQueue = result.then(() => undefined, () => undefined)
-  return result
-}
-
 const authAttempts = new Map()
 
 function authRateLimit(request, response, next) {
@@ -266,17 +251,9 @@ app.post('/api/auth/logout', requireSameOrigin, (request, response) => {
   response.status(204).end()
 })
 
-app.get('/api/status', async (_request, response) => {
+app.get('/api/status', (_request, response) => {
   response.setHeader('Cache-Control', 'no-store')
-  try {
-    response.json({
-      sdxlConfigured: Boolean(process.env.STABILITY_API_KEY?.trim()),
-      ...await modelStatus(),
-    })
-  } catch (error) {
-    console.error('Model status check failed:', error)
-    response.status(500).json({ error: 'Could not check the model configuration.' })
-  }
+  response.json({ sdxlConfigured: Boolean(process.env.STABILITY_API_KEY?.trim()) })
 })
 
 function isValidImage(file) {
@@ -288,87 +265,12 @@ function isValidImage(file) {
     bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
 }
 
-function handleModelFailure(error, response, operation) {
-  if (error instanceof ModelUnavailableError) {
-    console.error(`${operation} model is unavailable:`, error.message)
-    response.status(503).json({ error: error.message })
-    return
-  }
-  if (error instanceof InvalidImageError) {
-    response.status(400).json({ error: error.message })
-    return
-  }
-  console.error(`${operation} inference failed:`, error)
-  response.status(500).json({ error: `The ${operation.toLowerCase()} service could not process this image. Please try again.` })
-}
-
-app.post('/api/defects/detect', (request, response) => {
-  upload.single('image')(request, response, async (uploadError) => {
-    if (uploadError) {
-      response.status(uploadError.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: uploadError.message })
-      return
-    }
-    if (!request.file) {
-      response.status(400).json({ error: 'An image file is required.' })
-      return
-    }
-    if (!isValidImage(request.file)) {
-      response.status(400).json({ error: 'The uploaded file contents do not match a valid PNG or JPEG image.' })
-      return
-    }
-    try {
-      const result = await runInference(() => detectDefects(request.file.buffer))
-      cacheDetections(request.file.buffer, result)
-      response.json({ ...result, model: 'Tianchi Guangdong 20-class fabric defect detector' })
-    } catch (error) {
-      handleModelFailure(error, response, 'Defect detection')
-    }
-  })
-})
-
-app.post('/api/defects/remove', (request, response) => {
-  upload.single('image')(request, response, async (uploadError) => {
-    if (uploadError) {
-      response.status(uploadError.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: uploadError.message })
-      return
-    }
-    if (!request.file) {
-      response.status(400).json({ error: 'An image file is required.' })
-      return
-    }
-    if (!isValidImage(request.file)) {
-      response.status(400).json({ error: 'The uploaded file contents do not match a valid PNG or JPEG image.' })
-      return
-    }
-
-    let selectedIds
-    try {
-      selectedIds = JSON.parse(request.body.selectedDetectionIds)
-    } catch {
-      response.status(400).json({ error: 'Select one or more detected defects to remove.' })
-      return
-    }
-    if (!Array.isArray(selectedIds) || selectedIds.length < 1 || selectedIds.length > 12 ||
-        selectedIds.some((id) => typeof id !== 'string') || new Set(selectedIds).size !== selectedIds.length) {
-      response.status(400).json({ error: 'Select between 1 and 12 different detected defects at a time.' })
-      return
-    }
-
-    try {
-      const result = await runInference(() => inpaintDefects(request.file.buffer, selectedIds))
-      response.json(result)
-    } catch (error) {
-      handleModelFailure(error, response, 'Defect removal')
-    }
-  })
-})
-
 function upstreamErrorMessage(status, details) {
   const detail = details?.message || (Array.isArray(details?.errors) ? details.errors.join(' ') : '')
   if (status === 401) return 'Stability AI rejected the API key. Check STABILITY_API_KEY in your .env file.'
   if (status === 402) return 'Your Stability AI account has insufficient credits. Add credits and try again.'
   if (status === 403) return 'Stability AI declined this request due to its content policy.'
-  if (status === 429) return 'Stability AI rate limit reached. Wait briefly and try again.'
+  if (status === 429) return detail ? `Stability AI rate limit reached: ${detail}` : 'Stability AI rate limit reached. Wait briefly and try again.'
   if (status === 413) return 'The uploaded image or request is too large for Stability AI.'
   if (status === 400 || status === 422) return `Stability AI could not process this request${detail ? `: ${detail}` : '.'}`
   if (status === 404) return `The documented SDXL image-to-image service is unavailable for this account or engine${detail ? `: ${detail}` : '.'}`
@@ -526,6 +428,11 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
       let negativePrompt = typeof request.body.negativePrompt === 'string' ? request.body.negativePrompt.trim() : ''
       const defectType = typeof request.body.defectType === 'string' ? request.body.defectType.trim() : ''
       const taskMode = typeof request.body.taskMode === 'string' ? request.body.taskMode.trim() : ''
+      if (['dataset-builder', 'defect-creation'].includes(taskMode) &&
+          !['Hole', 'Stain', 'Scratch', 'Tear'].includes(defectType)) {
+        response.status(400).json({ error: 'Choose a supported defect type.' })
+        return
+      }
       let fabricType
       try {
         fabricType = normalizeFabricType(request.body.fabricType)
@@ -543,7 +450,7 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
         }
         prompt = buildColorVariationPrompt(prompt, desiredFabricColor)
       }
-      if (fabricType) {
+      if (fabricType && taskMode !== 'dataset-builder') {
         prompt = buildTextilePrompt(prompt, fabricType)
         negativePrompt = `${negativePrompt} incorrect fabric type, conflicting fiber material, inaccurate weave structure`
       }
@@ -561,7 +468,9 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
         response.status(400).json({ error: 'Image strength must be between 0.25 and 0.35.' })
         return
       }
-      const imageStrength = uiStrength
+      const imageStrength = taskMode === 'dataset-builder'
+        ? mapDatasetImageStrength(uiStrength)
+        : uiStrength
       if (!Number.isInteger(variations) || variations < 1 || variations > 50) {
         response.status(400).json({ error: 'Requested variations must be a whole number from 1 to 50.' })
         return
@@ -596,6 +505,7 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
             signal: AbortSignal.timeout(180000),
           })
         } catch (error) {
+          console.error('Could not reach Stability AI image-to-image endpoint:', error)
           const message = error.name === 'TimeoutError'
             ? 'The Stability AI request timed out. Try fewer variations or try again later.'
             : 'Could not connect to Stability AI. Check your internet connection and try again.'
@@ -610,6 +520,11 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
           } catch {
             details = null
           }
+          console.error('Stability AI image-to-image request failed:', {
+            status: upstream.status,
+            requestId: details && typeof details === 'object' && typeof details.id === 'string' ? details.id : undefined,
+            errorName: details && typeof details === 'object' && typeof details.name === 'string' ? details.name : undefined,
+          })
           response.status(upstream.status >= 500 ? 502 : upstream.status).json({
             error: upstreamErrorMessage(upstream.status, details),
           })
@@ -641,7 +556,7 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
           }
           if (!differsFromSource) continue
           let outputBase64 = artifact.base64
-          if ((taskMode === 'defect-creation' || taskMode === 'dataset-builder') && defectType) {
+          if (taskMode === 'defect-creation' && defectType) {
             try {
               outputBase64 = await applyDefectRefinement(artifact.base64, defectType)
             } catch (error) {
@@ -675,7 +590,26 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
         response.status(422).json({ error: 'Stability AI did not return any usable images. Try adjusting the prompt.' })
         return
       }
-      response.json({ images: results, positivePrompt: prompt, negativePrompt })
+      response.json({
+        images: results,
+        positivePrompt: prompt,
+        negativePrompt,
+        generation: {
+          provider: 'Stability AI',
+          model: 'stable-diffusion-xl-1024-v1-0',
+          imageStrength,
+          uiImageStrength: uiStrength,
+          requestedVariations: variations,
+          actualVariations: results.length,
+          fabricType,
+          defectType: ['dataset-builder', 'defect-creation'].includes(taskMode) ? defectType : null,
+          sourceImage: {
+            name: request.file.originalname,
+            type: request.file.mimetype,
+            size: request.file.size,
+          },
+        },
+      })
     } catch (error) {
       console.error('Stable Diffusion image-to-image request failed:', error)
       response.status(500).json({ error: 'The generation server encountered an unexpected error.' })
