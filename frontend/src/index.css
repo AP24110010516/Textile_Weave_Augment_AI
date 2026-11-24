@@ -84,23 +84,6 @@ html[data-theme="dark"] {
 .public-shell { min-height: 100vh; }
 .landing-shell {
   min-height: 100vh;
-  background-color: #10203a;
-  background-image:
-    linear-gradient(90deg, rgba(7, 22, 46, .78) 0%, rgba(7, 22, 46, .62) 49%, rgba(7, 22, 46, .26) 100%),
-    url("/landing-background.png");
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-}
-.landing-shell[data-theme="light"] {
-  background-image:
-    linear-gradient(90deg, rgba(7, 22, 46, .61) 0%, rgba(7, 22, 46, .43) 49%, rgba(7, 22, 46, .14) 100%),
-    url("/landing-background.png");
-}
-.landing-shell[data-theme="dark"] {
-  background-image:
-    linear-gradient(90deg, rgba(5, 15, 33, .85) 0%, rgba(5, 15, 33, .7) 49%, rgba(5, 15, 33, .38) 100%),
-    url("/landing-background.png");
 }
 .landing-shell .public-header {
   border-color: rgba(255,255,255,.18);
@@ -267,6 +250,13 @@ body { min-width: 320px; background: var(--page-bg); }
 button, a, input, select { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #9ebc8d; outline-offset: 3px; }
 .app-shell { min-height: 100vh; background: var(--page-bg); color: var(--text); transition: background .2s, color .2s; }
+.landing-shell {
+  background-color: transparent;
+  background-image: url("/landing-background.png");
+  background-position: center center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
 .page-wrap { width: min(1160px, calc(100% - 48px)); margin-inline: auto; }
 .site-header { position: sticky; z-index: 40; top: 0; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(18px); }
 .site-nav { width: min(1280px, calc(100% - 56px)); height: 74px; margin: auto; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
