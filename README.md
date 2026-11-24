@@ -61,7 +61,7 @@ The backend deployment target and public domain depend on the hosting platform; 
 
 ## Notes
 
-- The frontend sends uploaded textile images to `POST /api/stable-diffusion/augment`. Defect creation and color variation use this existing SDXL image-to-image integration. Color variation accepts an optional target color; when omitted, SDXL is prompted to choose a natural fabric color variation. The requested output count (1–50) is sent to the backend. SDXL availability depends on `STABILITY_API_KEY`.
+- The frontend sends uploaded textile images to `POST /api/stable-diffusion/augment`. Defect creation and color variation use this existing SDXL image-to-image integration. The selected fabric type (cotton, silk, denim, wool, or polyester) is passed to the backend and reinforced in the generation prompt. The Color Variation Generator asks SDXL to choose natural fabric color variations. The requested output count (1–50) is sent to the backend. SDXL availability depends on `STABILITY_API_KEY`.
 - The backend sends the request to the Stability AI SDXL image-to-image API and returns generated images as data URLs.
 - Authentication uses SQLite, scrypt password hashes, and opaque server-side sessions in HttpOnly, SameSite cookies. Password reset is not available because no email-delivery integration is configured.
 - The dataset builder labels images in the browser and exports ZIP/CSV files. It identifies exact duplicates only; similar-image matching is not implemented.

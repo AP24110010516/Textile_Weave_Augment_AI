@@ -7,7 +7,12 @@ const crypto = require('node:crypto')
 const { promisify } = require('node:util')
 const { DatabaseSync } = require('node:sqlite')
 const sharp = require('sharp')
-const { buildColorVariationPrompt, normalizeDesiredFabricColor } = require('./colorVariation.cjs')
+const {
+  buildColorVariationPrompt,
+  buildTextilePrompt,
+  normalizeDesiredFabricColor,
+  normalizeFabricType,
+} = require('./colorVariation.cjs')
 const {
   InvalidImageError,
   ModelUnavailableError,
@@ -518,9 +523,16 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
       }
 
       let prompt = typeof request.body.prompt === 'string' ? request.body.prompt.trim() : ''
-      const negativePrompt = typeof request.body.negativePrompt === 'string' ? request.body.negativePrompt.trim() : ''
+      let negativePrompt = typeof request.body.negativePrompt === 'string' ? request.body.negativePrompt.trim() : ''
       const defectType = typeof request.body.defectType === 'string' ? request.body.defectType.trim() : ''
       const taskMode = typeof request.body.taskMode === 'string' ? request.body.taskMode.trim() : ''
+      let fabricType
+      try {
+        fabricType = normalizeFabricType(request.body.fabricType)
+      } catch (error) {
+        response.status(400).json({ error: error.message })
+        return
+      }
       if (taskMode === 'color-variation') {
         let desiredFabricColor
         try {
@@ -530,6 +542,10 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
           return
         }
         prompt = buildColorVariationPrompt(prompt, desiredFabricColor)
+      }
+      if (fabricType) {
+        prompt = buildTextilePrompt(prompt, fabricType)
+        negativePrompt = `${negativePrompt} incorrect fabric type, conflicting fiber material, inaccurate weave structure`
       }
       const uiStrength = Number(request.body.imageStrength)
       const variations = Number(request.body.variations)
@@ -545,10 +561,7 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
         response.status(400).json({ error: 'Image strength must be between 0.25 and 0.35.' })
         return
       }
-      // Color changes need a stronger image-to-image transformation than defect work.
-      const imageStrength = taskMode === 'color-variation'
-        ? 0.85 - (uiStrength - 0.25)
-        : Math.max(0, Math.min(1, 1 - uiStrength))
+      const imageStrength = uiStrength
       if (!Number.isInteger(variations) || variations < 1 || variations > 50) {
         response.status(400).json({ error: 'Requested variations must be a whole number from 1 to 50.' })
         return

@@ -6,7 +6,7 @@ type Result = { name: string; url: string }
 type GenerationPrompts = { positive: string; negative: string }
 type AugmentationMode = 'defect-creation' | 'color-variation' | 'dataset-builder'
 type SdxlStatus = 'checking' | 'configured' | 'needs-key' | 'unavailable'
-type FabricType = 'Cotton' | 'Silk' | 'Denim' | 'Polyester'
+type FabricType = 'Cotton' | 'Silk' | 'Denim' | 'Wool' | 'Polyester'
 type DefectType = 'Hole' | 'Stain' | 'Scratch' | 'Tear'
 type Props = {
   mode: AugmentationMode
@@ -22,11 +22,6 @@ const dimensions = [
   { width: 768, height: 1344 }, { width: 832, height: 1216 }, { width: 896, height: 1152 },
 ]
 const negativePrompt = 'cartoon, illustration, artificial texture, plastic material, unrealistic fabric, excessive blur, distorted weave, text, watermark, visual artifacts.'
-const fabricColors = [
-  'Royal Blue', 'Navy Blue', 'Sky Blue', 'Bottle Green', 'Emerald Green', 'Olive Green',
-  'Maroon', 'Wine Red', 'Red', 'Pink', 'Rose Pink', 'Lavender', 'Purple', 'Mustard Yellow',
-  'Yellow', 'Orange', 'Peach', 'Coral', 'Brown', 'Beige', 'Cream', 'White', 'Black', 'Grey',
-]
 
 async function prepareImage(file: File): Promise<Blob> {
   let image: ImageBitmap
@@ -55,7 +50,7 @@ async function prepareImage(file: File): Promise<Blob> {
 
 function buildPrompt(mode: AugmentationMode, fabric: FabricType, defect: DefectType) {
   if (mode === 'dataset-builder') {
-    return `Photorealistic textile dataset sample of ${fabric.toLowerCase()} fabric with one naturally integrated ${defect.toLowerCase()} defect, preserve the exact source weave pattern, fiber structure, material appearance, folds, macro texture, and lighting, realistic industrial close-up photography, ${defect === 'Hole'
+    return `Photorealistic textile dataset sample of ${fabric.toLowerCase()} fabric with one naturally integrated ${defect.toLowerCase()} defect, preserve the selected fabric identity, source framing, folds, macro details, and lighting, realistic industrial close-up photography, ${defect === 'Hole'
       ? 'irregular woven edge interruption with exposed or darker underlying fibers and visibly broken threads'
       : defect === 'Scratch'
         ? 'thin rubbed fibers and realistic linear abrasion through the surface weave'
@@ -66,8 +61,8 @@ function buildPrompt(mode: AugmentationMode, fabric: FabricType, defect: DefectT
             : 'realistic visible surface damage'}; no text, label, sticker, painted circle, or artificial overlay.`
   }
   return mode === 'color-variation'
-    ? `Photorealistic image-to-image recoloring of the uploaded ${fabric.toLowerCase()} textile. Change only the dye color of the fabric itself while preserving its exact weave, fibers, pattern, folds, lighting, shadows, composition, and fine details.`
-    : `Photorealistic macro photograph of the source ${fabric.toLowerCase()} textile fabric with exactly one naturally integrated ${defect.toLowerCase()} defect, preserve the source weave, fibers, folds, base pattern, and lighting, realistic industrial textile inspection photography. ${defect === 'Hole'
+    ? `Photorealistic image-to-image variation of the uploaded textile. Keep the selected fabric type and its material characteristics, while preserving the source framing, folds, lighting, shadows, and fine details.`
+    : `Photorealistic macro photograph of the selected ${fabric.toLowerCase()} textile fabric with exactly one naturally integrated ${defect.toLowerCase()} defect, preserve the selected fabric identity and source folds, base pattern, and lighting, realistic industrial textile inspection photography. ${defect === 'Hole'
       ? 'The hole must interrupt the woven structure with irregular broken threads, visible surrounding fraying, and natural depth rather than a black circle or sticker.'
       : defect === 'Scratch'
         ? 'The scratch must visibly abrade and disturb individual surface threads as a thin irregular line rather than a painted mark.'
@@ -86,8 +81,6 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
   const [previewUrl, setPreviewUrl] = useState('')
   const [fabric, setFabric] = useState<FabricType>('Cotton')
   const [defect, setDefect] = useState<DefectType>('Hole')
-  const [selectedColor, setSelectedColor] = useState('')
-  const [customColor, setCustomColor] = useState('')
   const [imageStrength, setImageStrength] = useState(0.3)
   const [variationCount, setVariationCount] = useState('4')
   const [results, setResults] = useState<Result[]>([])
@@ -108,7 +101,6 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
     : mode === 'dataset-builder'
       ? 'Dataset Builder'
       : 'Create Defects on Fabric'
-  const color = selectedColor === 'custom' ? customColor : selectedColor
   const prompt = buildPrompt(mode, fabric, defect)
   const requestedVariations = Number(variationCount)
   const validVariationCount = Number.isInteger(requestedVariations) && requestedVariations >= 1 && requestedVariations <= 50
@@ -185,7 +177,7 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
       formData.append('variations', String(requestedVariations))
       formData.append('defectType', defect)
       formData.append('taskMode', mode)
-      formData.append('desiredFabricColor', mode === 'color-variation' ? color.trim() : '')
+      formData.append('fabricType', fabric)
 
       const progressTimer = window.setInterval(() => setProgress((current) => Math.min(current + 2, 90)), 700)
       try {
@@ -212,7 +204,7 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
         setGenerationPrompts({ positive: payload.positivePrompt, negative: payload.negativePrompt })
         if (generated.length > 0) setSelectedResult(generated[0])
         setProgress(100)
-        const summary = `${generated.length} images · ${fabric} · ${mode === 'color-variation' ? color.trim() || 'Natural color variations' : defect}`
+        const summary = `${generated.length} images · ${fabric} · ${mode === 'color-variation' ? 'Natural color variations' : defect}`
         setMessage(`${generated.length} AI-generated image${generated.length === 1 ? '' : 's'} ready.`)
         onGenerated(summary, generated)
       } finally { window.clearInterval(progressTimer) }
@@ -297,22 +289,9 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
         </section>
         <section className="workspace-card">
           <div className="card-heading">{mode !== 'dataset-builder' && <span className="step-badge">02</span>}<div><h2>{mode === 'dataset-builder' ? 'Image Settings' : 'Image settings'}</h2><p>Set the context for your generation.</p></div></div>
-          <div className="form-grid">
-            <label>{mode === 'dataset-builder' ? 'Fabric Type' : 'Fabric type'}<select value={fabric} onChange={(event) => setFabric(event.target.value as FabricType)}>{(['Cotton', 'Silk', 'Denim', 'Polyester'] as FabricType[]).map((value) => <option key={value}>{value}</option>)}</select></label>
-            {mode === 'color-variation' ? <div className="color-field">
-              <label htmlFor="desired-fabric-color">Desired Fabric Color (Optional)</label>
-              <select id="desired-fabric-color" value={selectedColor} onChange={(event) => setSelectedColor(event.target.value)}>
-                <option value="">Select a color</option>
-                {fabricColors.map((value) => <option key={value} value={value}>{value}</option>)}
-                <option value="custom">Custom Color</option>
-              </select>
-              {selectedColor === 'custom' && <>
-                <label htmlFor="custom-fabric-color">Enter Custom Fabric Color</label>
-                <input id="custom-fabric-color" value={customColor} maxLength={40} onChange={(event) => setCustomColor(event.target.value)} placeholder="Type color name..." />
-              </>}
-              <small className="field-note">Optional: Select a color or enter your own color. Leave blank to generate natural color variations from the uploaded fabric.</small>
-            </div> :
-              <label>{mode === 'dataset-builder' ? 'Defect Type' : 'Defect type'}<select value={defect} onChange={(event) => setDefect(event.target.value as DefectType)}>{(['Hole', 'Stain', 'Scratch', 'Tear'] as DefectType[]).map((value) => <option key={value}>{value}</option>)}</select></label>}
+          <div className={`form-grid ${mode === 'color-variation' ? 'form-grid-single' : ''}`}>
+            <label>{mode === 'dataset-builder' ? 'Fabric Type' : 'Fabric type'}<select value={fabric} onChange={(event) => setFabric(event.target.value as FabricType)}>{(['Cotton', 'Silk', 'Denim', 'Wool', 'Polyester'] as FabricType[]).map((value) => <option key={value}>{value}</option>)}</select></label>
+            {mode !== 'color-variation' && <label>{mode === 'dataset-builder' ? 'Defect Type' : 'Defect type'}<select value={defect} onChange={(event) => setDefect(event.target.value as DefectType)}>{(['Hole', 'Stain', 'Scratch', 'Tear'] as DefectType[]).map((value) => <option key={value}>{value}</option>)}</select></label>}
           </div>
         </section>
         {mode === 'dataset-builder' && <section className="workspace-card">

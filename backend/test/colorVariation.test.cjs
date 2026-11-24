@@ -1,6 +1,35 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { buildColorVariationPrompt, normalizeDesiredFabricColor } = require('../colorVariation.cjs')
+const {
+  buildColorVariationPrompt,
+  buildTextilePrompt,
+  normalizeDesiredFabricColor,
+  normalizeFabricType,
+} = require('../colorVariation.cjs')
+
+test('textile prompts retain the selected fabric characteristics for every supported type', () => {
+  const examples = [
+    ['Cotton', /cotton fibers/i],
+    ['Silk', /continuous-filament fibers/i],
+    ['Denim', /diagonal twill weave/i],
+    ['Wool', /crimped wool fibers/i],
+    ['Polyester', /synthetic filaments/i],
+  ]
+
+  for (const [fabricType, expectedCharacteristic] of examples) {
+    const prompt = buildTextilePrompt('Generate a variation.', normalizeFabricType(fabricType))
+    assert.match(prompt, new RegExp(`final textile must be unmistakably ${fabricType}`, 'i'))
+    assert.match(prompt, expectedCharacteristic)
+    assert.match(prompt, /if the source differs, transform its fiber appearance and weave/i)
+    assert.match(prompt, new RegExp(`selected ${fabricType} identity throughout`, 'i'))
+  }
+})
+
+test('fabric type normalization has no default and rejects unknown values', () => {
+  assert.equal(normalizeFabricType(undefined), '')
+  assert.equal(buildTextilePrompt('Use the existing prompt.', normalizeFabricType('')), 'Use the existing prompt.')
+  assert.throws(() => normalizeFabricType('Linen'), /Unsupported fabric type/)
+})
 
 test('an omitted or empty color is valid and requests natural color variation', () => {
   assert.equal(normalizeDesiredFabricColor(undefined), '')
