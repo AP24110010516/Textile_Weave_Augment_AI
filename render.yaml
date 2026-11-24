@@ -3,8 +3,10 @@ services:
     name: weaveaugment-ai
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm install && npm run models:download --workspace=weaveaugment-ai-backend && npm run build
     startCommand: npm start
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: STABILITY_API_KEY
         sync: false
