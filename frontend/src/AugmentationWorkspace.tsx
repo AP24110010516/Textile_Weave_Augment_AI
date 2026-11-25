@@ -49,11 +49,9 @@ async function prepareImage(file: File): Promise<Blob> {
     canvas.height = size.height
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Could not prepare the uploaded image. Please try again.')
-    const scale = Math.min(canvas.width / image.width, canvas.height / image.height)
+    const scale = Math.max(canvas.width / image.width, canvas.height / image.height)
     const width = image.width * scale
     const height = image.height * scale
-    context.fillStyle = '#fff'
-    context.fillRect(0, 0, canvas.width, canvas.height)
     context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height)
     return await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not prepare the uploaded image. Please try again.')), 'image/png')
@@ -73,7 +71,7 @@ function buildPrompt(mode: AugmentationMode, fabric: FabricType, defect: DefectT
     return `Create a distinct but subtle image-to-image variation of the exact uploaded textile. Keep the existing ${defect.toLowerCase()} defect clearly visible in the same source area; ${defectVariation}. Preserve the same fabric surface, weave, color, camera angle, crop, scale, and background. The selected fabric label is ${fabric}, but do not change the source textile into a different material or scene. Photorealistic macro textile inspection image with natural woven fibers and realistic texture.`
   }
   return mode === 'color-variation'
-    ? `Photorealistic image-to-image variation of the uploaded textile. Keep the selected fabric type and its material characteristics, while preserving the source framing, folds, lighting, shadows, and fine details.`
+    ? `Use the supplied photograph as an exact structural reference. Create a natural textile-only color variation by recoloring the existing fabric, fibers, weave, folds, shadows, and fine details. Preserve the same objects, composition, camera framing, crop, scale, texture, and background. Do not replace the fabric with another object or scene, do not add flowers or patterns, and do not change the weave or material.`
     : `Photorealistic macro photograph of the selected ${fabric.toLowerCase()} textile fabric with exactly one naturally integrated ${defect.toLowerCase()} defect, preserve the selected fabric identity and source folds, base pattern, and lighting, realistic industrial textile inspection photography. ${defect === 'Hole'
       ? 'The hole must interrupt the woven structure with irregular broken threads, visible surrounding fraying, and natural depth rather than a black circle or sticker.'
       : defect === 'Scratch'
@@ -123,7 +121,7 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
     ? Number((imageStrength + 0.45).toFixed(2))
     : imageStrength
   const requestNegativePrompt = mode === 'color-variation'
-    ? `${negativePrompt} flat color overlay, color cast, colored lighting, altered weave, changed material`
+    ? `${negativePrompt} flat color overlay, color cast, colored lighting, altered weave, changed material, replacement fabric, new object, flowers, plants, clothing, person, architecture, new background, new scene, new pattern, collage`
     : mode === 'dataset-builder'
       ? `${negativePrompt} clean unblemished fabric, missing or hidden ${defect.toLowerCase()} defect, different defect type, new scene, changed camera angle, changed crop, draped fabric, decorative folds, sculpture, unrelated object`
       : negativePrompt
@@ -474,7 +472,7 @@ export default function AugmentationWorkspace({ mode, sdxlStatus, onBack, onGene
         {selectedResult && previewUrl && <div className="comparison-grid"><div><span>BEFORE · Original Fabric</span><img src={previewUrl} alt="Original uploaded textile before generation" /></div><div><span>AFTER · {selectedResult.name}</span><img src={selectedResult.url} alt={`Selected generated variation: ${selectedResult.name}`} /></div></div>}
         {results.length ? <div className="result-grid">{results.map((image, index) => <article className={`result-item ${selectedResult?.url === image.url ? 'result-item-selected' : ''}`} key={`${image.name}-${index}`}><button className="result-item-select" type="button" aria-pressed={selectedResult?.url === image.url} onClick={() => setSelectedResult(image)}><img src={image.url} alt={image.name} /><span>{selectedResult?.url === image.url ? 'Selected' : 'Select variation'}</span></button><div className="result-item-actions"><span title={image.name}>{image.name}</span><button aria-label={`Download ${image.name}`} title="Download" onClick={() => downloadImage(image, index)}><ArrowDownToLine size={15} /></button><button aria-label={`Save ${image.name}`} title={savedUrls.includes(image.url) ? 'Saved' : 'Save image'} onClick={() => saveImage(image)} disabled={savedUrls.includes(image.url)}>{savedUrls.includes(image.url) ? <Check size={15} /> : <Bookmark size={15} />}</button></div></article>)}</div> :
           <div className="results-empty"><span className="empty-icon"><FileImage size={21} /></span><b>No results yet</b><p>Upload an image and run the configured SDXL workflow to see output here.</p></div>}
-        <p className="workspace-disclaimer">Review generated images before using them. Outputs are produced by SDXL and may not preserve every source detail.</p>
+        <p className="workspace-disclaimer">Review generated images before using them. AI outputs may not preserve every source detail.</p>
       </section>
     </div>
   </section>

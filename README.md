@@ -23,12 +23,13 @@ The root npm workspace configuration and lockfile manage both applications. Fron
    npm install
    ```
 
-2. Add your Stability AI key to `backend/.env`:
+2. Add your Stability AI key to `backend/.env` (see `backend/.env.example`):
    ```env
    STABILITY_API_KEY=your_key_here
    PORT=3001
    ```
 
+   Keep the key secret and do not commit `backend/.env`.
    The backend requires Node.js 22.13 or later for its built-in SQLite account database. Accounts and sessions are stored in the ignored `backend/data/` directory; set `DATABASE_PATH` to choose another persistent location in production.
 
 3. Start the backend in one terminal:
@@ -58,8 +59,8 @@ The backend deployment target and public domain depend on the hosting platform; 
 
 ## Notes
 
-- The frontend sends uploaded textile images to `POST /api/stable-diffusion/augment`. Dataset Builder, defect creation, and color variation use the existing Stability AI SDXL image-to-image integration. Dataset Builder sends the selected fabric, defect, strength (0.25–0.35, default 0.30), and requested variation count (1–50) to the backend. Its strength is calibrated to SDXL's 0.70–0.80 image-strength range, and its prompt asks for local variations of the selected existing defect. The Color Variation Generator asks SDXL to choose natural fabric color variations. SDXL availability depends on `STABILITY_API_KEY`.
-- The backend sends the request to the Stability AI SDXL image-to-image API and returns generated images and the resolved prompts as data URLs and metadata.
+- The frontend sends uploaded textile images to `POST /api/stable-diffusion/augment`. Dataset Builder, defect creation, and color variation use the Stability AI SDXL image-to-image integration. Dataset Builder sends the selected fabric, defect, strength (0.25–0.35, default 0.30), and requested variation count (1–50) to the backend. Its strength is calibrated to SDXL's 0.70–0.80 image-strength range, and its prompt asks for local variations of the selected existing defect. The Color Variation Generator asks SDXL to choose natural fabric color variations. Availability depends on `STABILITY_API_KEY`.
+- The backend sends image-to-image requests to Stability AI and returns generated images and the resolved prompts as data URLs and metadata.
 - Authentication uses SQLite, scrypt password hashes, and opaque server-side sessions in HttpOnly, SameSite cookies. Password reset is not available because no email-delivery integration is configured.
 - Dataset Builder uses the uploaded image as SDXL input. Saving a generated dataset, including when downloading its ZIP, stores the generated PNGs and generation metadata in the browser's IndexedDB Dataset Library. Dataset Library entries persist across refreshes in that browser, but are not synced to the server or other devices and can be removed by clearing browser site data.
 - The backend uses `sharp` to validate and process generated images. It does not run separate local inference models.

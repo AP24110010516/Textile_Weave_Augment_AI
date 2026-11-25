@@ -412,7 +412,7 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
 
     try {
       if (!process.env.STABILITY_API_KEY?.trim()) {
-        response.status(503).json({ error: 'Stability AI is not configured. Add STABILITY_API_KEY=your_key to backend/.env and restart the server.' })
+        response.status(503).json({ error: 'Stability AI is not configured. Add STABILITY_API_KEY to backend/.env and restart the server.' })
         return
       }
       if (!request.file) {
@@ -450,7 +450,7 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
         }
         prompt = buildColorVariationPrompt(prompt, desiredFabricColor)
       }
-      if (fabricType && taskMode !== 'dataset-builder') {
+      if (fabricType && taskMode !== 'dataset-builder' && taskMode !== 'color-variation') {
         prompt = buildTextilePrompt(prompt, fabricType)
         negativePrompt = `${negativePrompt} incorrect fabric type, conflicting fiber material, inaccurate weave structure`
       }
@@ -558,7 +558,7 @@ app.post('/api/stable-diffusion/augment', (request, response) => {
           let outputBase64 = artifact.base64
           if (taskMode === 'defect-creation' && defectType) {
             try {
-              outputBase64 = await applyDefectRefinement(artifact.base64, defectType)
+              outputBase64 = await applyDefectRefinement(outputBase64, defectType)
             } catch (error) {
               console.error('Could not apply defect refinement:', error)
               response.status(422).json({ error: 'The defect image could not be constructed. Try again.' })

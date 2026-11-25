@@ -24,7 +24,6 @@ function buildTextilePrompt(basePrompt, fabricType) {
 }
 
 function mapDatasetImageStrength(uiStrength) {
-  // Calibrate the UI range to SDXL strengths that retain most of the source image.
   return Number((uiStrength + 0.45).toFixed(2))
 }
 
@@ -41,10 +40,10 @@ function normalizeDesiredFabricColor(value) {
 
 function buildColorVariationPrompt(basePrompt, desiredFabricColor) {
   const colorInstruction = desiredFabricColor
-    ? `Re-dye the fabric in the supplied image to ${desiredFabricColor}. The requested color must be visible in the textile fibers and yarns themselves, not as colored lighting, a background change, or a transparent overlay. Change the fabric color only; retain the same material, weave, texture, folds, shadows, and fine details.`
-    : 'Create a natural color variation of the fabric in the supplied image. Select a plausible fabric color freely for this generated sample, and make the fabric color visibly different from the source. Do not retain the source color and do not favor any fixed or default color. Preserve the same material, weave, texture, folds, shadows, and fine details.'
+    ? `Re-dye the fabric in the supplied image to ${desiredFabricColor}. The requested color must be visible in the textile fibers and yarns themselves, not as colored lighting, a background change, or a transparent overlay.`
+    : 'Create a natural textile-only color variation of the fabric in the supplied image. Change the fabric palette while keeping the original textile, composition, and objects.'
 
-  return `${colorInstruction} ${basePrompt}`.trim()
+  return `${colorInstruction} Use the supplied photograph as an exact structural reference: preserve the source crop, framing, camera angle, folds, weave, texture, shadows, background, and every existing object. Change only the fabric color. Do not retain the original fabric color, but do not add flowers, plants, people, products, logos, printed patterns, a new scene, or any unrelated object. ${basePrompt}`.trim()
 }
 
 module.exports = {
